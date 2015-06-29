@@ -22,6 +22,9 @@
 		zoomablePreview: null,
 		active: false,
 		backgroundToggle: false,
+		// We need 6 hexas for comparison reasons
+		darkBackgroundColour: '#000000',
+		lightBackgroundColour: '#ffffff',
 
 		/**
 		 * Initialises the slideshow
@@ -105,9 +108,12 @@
 					this.errorLoadingImage = false;
 					this.currentImage = img;
 
-					var backgroundColour = '#000';
+					var backgroundColour = this.darkBackgroundColour;
 					if (transparent) {
-						backgroundColour = '#fff';
+						backgroundColour = this.lightBackgroundColour;
+					}
+					if (image.backGroundColour !== null) {
+						backgroundColour = image.backGroundColour;
 					}
 					img.setAttribute('alt', image.name);
 					$(img).css('position', 'absolute');
@@ -152,6 +158,7 @@
 				var image = new Image();
 
 				image.onload = function () {
+					preview.backGroundColour = this._calculateBackgroundColour(image, mimeType);
 					if (this.imageCache[url]) {
 						this.imageCache[url].resolve(image);
 					}
@@ -181,6 +188,79 @@
 				// Preloads the next image in the list
 				this.loadImage(next);
 			}.bind(this));
+		},
+
+		/**
+		 * Calculates the luminance of an image
+		 *
+		 * @param {*} image
+		 * @param {string} mimeType
+		 *
+		 * @returns {string}
+		 * @private
+		 */
+		_calculateBackgroundColour: function (image, mimeType) {
+			var backgroundColour = this.darkBackgroundColour;
+			if (!this._isTransparent(image.mimeType)) {
+				return backgroundColour;
+			}
+
+			// The name has to be 'canvas'
+			var lumiCanvas = document.createElement('canvas');
+			lumiCanvas.width = 200;
+			lumiCanvas.height = 200;
+			var lumiCtx = lumiCanvas.getContext('2d');
+
+			lumiCanvas.height = lumiCanvas.width * (image.height / image.width);
+			lumiCtx.drawImage(image, 0, 0, lumiCanvas.width, lumiCanvas.height);
+			var imgData = lumiCtx.getImageData(0, 0, lumiCanvas.width, lumiCanvas.height);
+			var pix = imgData.data;
+			var pixelArraySize = pix.length;
+			var numberOfSamples = 4000; // Seems to be the sweet spot
+			var totalLuminance = 0;
+			var sampleNumber = 1;
+			var averageLuminance;
+			var totalAlpha = 0;
+			var alphaLevel;
+			var red = 0;
+			var green = 0;
+			var blue = 0;
+			var alpha = 0;
+			var lum = 0;
+
+			var sampleCounter = 0;
+
+			var sampleSize = Math.floor(pixelArraySize / numberOfSamples);
+
+			// i += 4 because 4 colours for every pixel
+			for (var i = 0, n = pixelArraySize; i < n; i += 4 * sampleSize) {
+				sampleCounter++;
+				alpha = pix[i + 3] / 255;
+				totalAlpha += alpha;
+				if (Math.ceil(alpha * 100) / 100 > 0.1) {
+					red = pix[i];
+					green = pix[i + 1];
+					blue = pix[i + 2];
+					// Luminance formula from
+					// http://stackoverflow.com/questions/596216/formula-to-determine-brightness-of-rgb-color
+					lum = (red + red + green + green + green + blue) / 6;
+					//lum = (red * 0.299 + green * 0.587 + blue * 0.114 );
+					totalLuminance += lum * alpha;
+					sampleNumber++;
+				}
+			}
+
+			// Deletes the canvas
+			lumiCanvas = null;
+
+			// Calculate the optimum background colour for this image
+			averageLuminance = Math.ceil((totalLuminance / sampleNumber) * 100) / 100;
+			alphaLevel = Math.ceil((totalAlpha / (numberOfSamples / 4)) * 100);
+			if (averageLuminance < 50 && alphaLevel < 90) {
+				backgroundColour = this.lightBackgroundColour;
+			}
+
+			return backgroundColour;
 		},
 
 		/**
@@ -220,15 +300,15 @@
 			var $border = 30 / window.devicePixelRatio;
 
 			// Grey #363636
-			if (hex === "#000000") {
-				container.css('background-color', '#FFF');
+			if (hex === this.darkBackgroundColour) {
+				container.css('background-color', this.lightBackgroundColour);
 				if (this.backgroundToggle === true) {
-					container.css('outline', $border + 'px solid #FFF');
+					container.css('outline', $border + 'px solid ' + this.lightBackgroundColour);
 				}
 			} else {
-				container.css('background-color', '#000');
+				container.css('background-color', this.darkBackgroundColour);
 				if (this.backgroundToggle === true) {
-					container.css('outline', $border + 'px solid #000');
+					container.css('outline', $border + 'px solid ' + this.darkBackgroundColour);
 				}
 			}
 		},
