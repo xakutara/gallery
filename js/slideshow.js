@@ -1,4 +1,4 @@
-/* global DOMPurify */
+/* global Gallery, Thumbnails, DOMPurify */
 (function ($, OC, OCA, t) {
 	"use strict";
 	/**
@@ -107,20 +107,12 @@
 					this.controls.showActionButtons(transparent, Gallery.token, image.permissions);
 					this.errorLoadingImage = false;
 					this.currentImage = img;
-
-					var backgroundColour = this.darkBackgroundColour;
-					if (transparent) {
-						backgroundColour = this.lightBackgroundColour;
-					}
-					if (image.backGroundColour !== null) {
-						backgroundColour = image.backGroundColour;
-					}
 					img.setAttribute('alt', image.name);
 					$(img).css('position', 'absolute');
-					$(img).css('background-color', backgroundColour);
+					$(img).css('background-color', image.backgroundColour);
 					if (transparent && this.backgroundToggle === true) {
 						var $border = 30 / window.devicePixelRatio;
-						$(img).css('outline', $border + 'px solid ' + backgroundColour);
+						$(img).css('outline', $border + 'px solid ' + image.backgroundColour);
 					}
 
 					this.zoomablePreview.startBigshot(img, this.currentImage, image.mimeType);
@@ -158,7 +150,7 @@
 				var image = new Image();
 
 				image.onload = function () {
-					preview.backGroundColour = this._calculateBackgroundColour(image, mimeType);
+					preview.backgroundColour = this._getBackgroundColour(image);
 					if (this.imageCache[url]) {
 						this.imageCache[url].resolve(image);
 					}
@@ -191,32 +183,48 @@
 		},
 
 		/**
-		 * Calculates the luminance of an image
+		 * Determines which colour to use for the background
 		 *
 		 * @param {*} image
-		 * @param {string} mimeType
 		 *
 		 * @returns {string}
 		 * @private
 		 */
-		_calculateBackgroundColour: function (image, mimeType) {
+		_getBackgroundColour: function (image) {
 			var backgroundColour = this.darkBackgroundColour;
-			if (!this._isTransparent(image.mimeType)) {
-				return backgroundColour;
+			if (this._isTransparent(image.mimeType) && this._isMainlyDark(image)) {
+				backgroundColour = this.lightBackgroundColour;
 			}
+			return backgroundColour;
+		},
 
+		/**
+		 * Calculates the luminance of an image to determine if an image is mainly dark
+		 *
+		 * @param {*} image
+		 *
+		 * @returns {boolean}
+		 * @private
+		 */
+		_isMainlyDark: function (image) {
+			var isMainlyDark = true;
+			var numberOfSamples = 1000; // Seems to be the sweet spot
 			// The name has to be 'canvas'
 			var lumiCanvas = document.createElement('canvas');
-			lumiCanvas.width = 200;
-			lumiCanvas.height = 200;
-			var lumiCtx = lumiCanvas.getContext('2d');
 
-			lumiCanvas.height = lumiCanvas.width * (image.height / image.width);
-			lumiCtx.drawImage(image, 0, 0, lumiCanvas.width, lumiCanvas.height);
+			var imgArea = image.width * image.height;
+			var canArea = numberOfSamples;
+			var factor = Math.sqrt(canArea / imgArea);
+
+			var scaledWidth = factor * image.width;
+			var scaledHeight = factor * image.height;
+			lumiCanvas.width = scaledWidth;
+			lumiCanvas.height = scaledHeight;
+			var lumiCtx = lumiCanvas.getContext('2d');
+			lumiCtx.drawImage(image, 0, 0, scaledWidth, scaledHeight);
 			var imgData = lumiCtx.getImageData(0, 0, lumiCanvas.width, lumiCanvas.height);
-			var pix = imgData.data;
+			var pix = imgData.data; // pix.length will be approximately 4*numberOfSamples (for RGBA)
 			var pixelArraySize = pix.length;
-			var numberOfSamples = 4000; // Seems to be the sweet spot
 			var totalLuminance = 0;
 			var sampleNumber = 1;
 			var averageLuminance;
@@ -227,17 +235,20 @@
 			var blue = 0;
 			var alpha = 0;
 			var lum = 0;
+			var alphaThreshold = 0.1;
 
 			var sampleCounter = 0;
-
-			var sampleSize = Math.floor(pixelArraySize / numberOfSamples);
-
+			var itemsPerPixel = 4; // red, green, blue, alpha
+			var sampleSize = Math.floor(pixelArraySize / (itemsPerPixel * numberOfSamples));
+			if (sampleSize <= 0) {
+				sampleSize = 1;
+			}
 			// i += 4 because 4 colours for every pixel
-			for (var i = 0, n = pixelArraySize; i < n; i += 4 * sampleSize) {
+			for (var i = 0, n = pixelArraySize; i < n; i += itemsPerPixel * sampleSize) {
 				sampleCounter++;
 				alpha = pix[i + 3] / 255;
 				totalAlpha += alpha;
-				if (Math.ceil(alpha * 100) / 100 > 0.1) {
+				if (Math.ceil(alpha * 100) / 100 > alphaThreshold) {
 					red = pix[i];
 					green = pix[i + 1];
 					blue = pix[i + 2];
@@ -255,12 +266,12 @@
 
 			// Calculate the optimum background colour for this image
 			averageLuminance = Math.ceil((totalLuminance / sampleNumber) * 100) / 100;
-			alphaLevel = Math.ceil((totalAlpha / (numberOfSamples / 4)) * 100);
+			alphaLevel = Math.ceil((totalAlpha / numberOfSamples) * 100);
 			if (averageLuminance < 50 && alphaLevel < 90) {
-				backgroundColour = this.lightBackgroundColour;
+				isMainlyDark = false;
 			}
 
-			return backgroundColour;
+			return isMainlyDark;
 		},
 
 		/**
@@ -298,19 +309,20 @@
 			var rgb = container.css('background-color').match(/\d+/g);
 			var hex = "#" + toHex(rgb[0]) + toHex(rgb[1]) + toHex(rgb[2]);
 			var $border = 30 / window.devicePixelRatio;
+			var newBackgroundColor;
 
 			// Grey #363636
 			if (hex === this.darkBackgroundColour) {
-				container.css('background-color', this.lightBackgroundColour);
-				if (this.backgroundToggle === true) {
-					container.css('outline', $border + 'px solid ' + this.lightBackgroundColour);
-				}
+				newBackgroundColor = this.lightBackgroundColour;
 			} else {
-				container.css('background-color', this.darkBackgroundColour);
-				if (this.backgroundToggle === true) {
-					container.css('outline', $border + 'px solid ' + this.darkBackgroundColour);
-				}
+				newBackgroundColor = this.darkBackgroundColour;
 			}
+
+			container.css('background-color', newBackgroundColor);
+			if (this.backgroundToggle === true) {
+				container.css('outline', $border + 'px solid ' + newBackgroundColor);
+			}
+
 		},
 
 		/**
@@ -463,57 +475,57 @@
 				var self = this;
 				var url = OC.generateUrl('apps/gallery/slideshow', null);
 				$.get(url, function (tmpl) {
-						var template = $(tmpl);
-						var tmplButton;
-						var buttonsArray = [
-							{
-								el: '.next',
-								trans: t('gallery', 'Next')
-							},
-							{
-								el: '.play',
-								trans: t('gallery', 'Play')
-							},
-							{
-								el: '.pause',
-								trans: t('gallery', 'Pause')
-							},
-							{
-								el: '.previous',
-								trans: t('gallery', 'Previous')
-							},
-							{
-								el: '.exit',
-								trans: t('gallery', 'Close')
-							},
-							{
-								el: '.downloadImage',
-								trans: t('gallery', 'Download'),
-								toolTip: true
-							},
-							{
-								el: '.changeBackground',
-								trans: t('gallery', 'Toggle background'),
-								toolTip: true
-							},
-							{
-								el: '.deleteImage',
-								trans: t('gallery', 'Delete'),
-								toolTip: true
-							}
-						];
-						for (var i = 0; i < buttonsArray.length; i++) {
-							var button = buttonsArray[i];
-
-							tmplButton = template.find(button.el);
-							tmplButton.val(button.trans);
-							if (button.toolTip) {
-								tmplButton.attr("title", button.trans);
-							}
+					var template = $(tmpl);
+					var tmplButton;
+					var buttonsArray = [
+						{
+							el: '.next',
+							trans: t('gallery', 'Next')
+						},
+						{
+							el: '.play',
+							trans: t('gallery', 'Play')
+						},
+						{
+							el: '.pause',
+							trans: t('gallery', 'Pause')
+						},
+						{
+							el: '.previous',
+							trans: t('gallery', 'Previous')
+						},
+						{
+							el: '.exit',
+							trans: t('gallery', 'Close')
+						},
+						{
+							el: '.downloadImage',
+							trans: t('gallery', 'Download'),
+							toolTip: true
+						},
+						{
+							el: '.changeBackground',
+							trans: t('gallery', 'Toggle background'),
+							toolTip: true
+						},
+						{
+							el: '.deleteImage',
+							trans: t('gallery', 'Delete'),
+							toolTip: true
 						}
-						self.$slideshowTemplate = template;
-						defer.resolve(self.$slideshowTemplate);
-					})
+					];
+					for (var i = 0; i < buttonsArray.length; i++) {
+						var button = buttonsArray[i];
+
+						tmplButton = template.find(button.el);
+						tmplButton.val(button.trans);
+						if (button.toolTip) {
+							tmplButton.attr("title", button.trans);
+						}
+					}
+					self.$slideshowTemplate = template;
+					defer.resolve(self.$slideshowTemplate);
+				})
 					.fail(function () {
 						defer.reject();
 					});
