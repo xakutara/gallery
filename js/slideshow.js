@@ -150,7 +150,7 @@
 				var image = new Image();
 
 				image.onload = function () {
-					preview.backgroundColour = this._getBackgroundColour(image);
+					preview.backgroundColour = this._getBackgroundColour(image, mimeType);
 					if (this.imageCache[url]) {
 						this.imageCache[url].resolve(image);
 					}
@@ -186,13 +186,14 @@
 		 * Determines which colour to use for the background
 		 *
 		 * @param {*} image
+		 * @param {string} mimeType
 		 *
 		 * @returns {string}
 		 * @private
 		 */
-		_getBackgroundColour: function (image) {
+		_getBackgroundColour: function (image, mimeType) {
 			var backgroundColour = this.darkBackgroundColour;
-			if (this._isTransparent(image.mimeType) && this._isMainlyDark(image)) {
+			if (this._isTransparent(mimeType) && this._isMainlyDark(image)) {
 				backgroundColour = this.lightBackgroundColour;
 			}
 			return backgroundColour;
@@ -239,12 +240,8 @@
 
 			var sampleCounter = 0;
 			var itemsPerPixel = 4; // red, green, blue, alpha
-			var sampleSize = Math.floor(pixelArraySize / (itemsPerPixel * numberOfSamples));
-			if (sampleSize <= 0) {
-				sampleSize = 1;
-			}
 			// i += 4 because 4 colours for every pixel
-			for (var i = 0, n = pixelArraySize; i < n; i += itemsPerPixel * sampleSize) {
+			for (var i = 0, n = pixelArraySize; i < n; i += itemsPerPixel) {
 				sampleCounter++;
 				alpha = pix[i + 3] / 255;
 				totalAlpha += alpha;
